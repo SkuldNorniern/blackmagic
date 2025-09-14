@@ -341,3 +341,146 @@ impl TokenKind {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_keyword() {
+        // Test keywords
+        assert!(TokenKind::Circle.is_keyword());
+        assert!(TokenKind::Spell.is_keyword());
+        assert!(TokenKind::Let.is_keyword());
+        assert!(TokenKind::If.is_keyword());
+        assert!(TokenKind::While.is_keyword());
+        assert!(TokenKind::Return.is_keyword());
+        assert!(TokenKind::Struct.is_keyword());
+        assert!(TokenKind::Enum.is_keyword());
+        assert!(TokenKind::Void.is_keyword());
+        assert!(TokenKind::Bottom.is_keyword());
+
+        // Test non-keywords
+        assert!(!TokenKind::Identifier.is_keyword());
+        assert!(!TokenKind::IntLiteral.is_keyword());
+        assert!(!TokenKind::Plus.is_keyword());
+        assert!(!TokenKind::LeftParen.is_keyword());
+        assert!(!TokenKind::Comment.is_keyword());
+        assert!(!TokenKind::Eof.is_keyword());
+    }
+
+    #[test]
+    fn test_is_operator() {
+        // Test operators
+        assert!(TokenKind::Plus.is_operator());
+        assert!(TokenKind::Minus.is_operator());
+        assert!(TokenKind::Star.is_operator());
+        assert!(TokenKind::Slash.is_operator());
+        assert!(TokenKind::EqualEqual.is_operator());
+        assert!(TokenKind::BangEqual.is_operator());
+        assert!(TokenKind::Less.is_operator());
+        assert!(TokenKind::GreaterEqual.is_operator());
+        assert!(TokenKind::And.is_operator());
+        assert!(TokenKind::Or.is_operator());
+        assert!(TokenKind::Not.is_operator());
+        assert!(TokenKind::Ampersand.is_operator());
+        assert!(TokenKind::Pipe.is_operator());
+        assert!(TokenKind::Caret.is_operator());
+
+        // Test non-operators
+        assert!(!TokenKind::Circle.is_operator());
+        assert!(!TokenKind::Identifier.is_operator());
+        assert!(!TokenKind::IntLiteral.is_operator());
+        assert!(!TokenKind::LeftParen.is_operator());
+        assert!(!TokenKind::Comment.is_operator());
+    }
+
+    #[test]
+    fn test_is_punctuation() {
+        // Test punctuation
+        assert!(TokenKind::LeftParen.is_punctuation());
+        assert!(TokenKind::RightParen.is_punctuation());
+        assert!(TokenKind::LeftBracket.is_punctuation());
+        assert!(TokenKind::RightBracket.is_punctuation());
+        assert!(TokenKind::LeftBrace.is_punctuation());
+        assert!(TokenKind::RightBrace.is_punctuation());
+        assert!(TokenKind::Comma.is_punctuation());
+        assert!(TokenKind::Semicolon.is_punctuation());
+        assert!(TokenKind::Colon.is_punctuation());
+        assert!(TokenKind::DoubleColon.is_punctuation());
+        assert!(TokenKind::Arrow.is_punctuation());
+        assert!(TokenKind::Exclamation.is_punctuation());
+
+        // Test non-punctuation
+        assert!(!TokenKind::Circle.is_punctuation());
+        assert!(!TokenKind::Identifier.is_punctuation());
+        assert!(!TokenKind::IntLiteral.is_punctuation());
+        assert!(!TokenKind::Plus.is_punctuation());
+        assert!(!TokenKind::Comment.is_punctuation());
+    }
+
+    #[test]
+    fn test_is_literal() {
+        // Test literals
+        assert!(TokenKind::IntLiteral.is_literal());
+        assert!(TokenKind::FloatLiteral.is_literal());
+        assert!(TokenKind::StringLiteral.is_literal());
+        assert!(TokenKind::RawStringLiteral.is_literal());
+        assert!(TokenKind::BoolLiteral.is_literal());
+
+        // Test non-literals
+        assert!(!TokenKind::Circle.is_literal());
+        assert!(!TokenKind::Identifier.is_literal());
+        assert!(!TokenKind::Plus.is_literal());
+        assert!(!TokenKind::LeftParen.is_literal());
+        assert!(!TokenKind::Comment.is_literal());
+        assert!(!TokenKind::Eof.is_literal());
+    }
+
+    #[test]
+    fn test_as_str() {
+        // Test keyword strings
+        assert_eq!(TokenKind::Circle.as_str(), "circle");
+        assert_eq!(TokenKind::Spell.as_str(), "spell");
+        assert_eq!(TokenKind::Let.as_str(), "let");
+        assert_eq!(TokenKind::If.as_str(), "if");
+        assert_eq!(TokenKind::While.as_str(), "while");
+        assert_eq!(TokenKind::Return.as_str(), "return");
+
+        // Test operator strings
+        assert_eq!(TokenKind::Plus.as_str(), "+");
+        assert_eq!(TokenKind::Minus.as_str(), "-");
+        assert_eq!(TokenKind::Star.as_str(), "*");
+        assert_eq!(TokenKind::EqualEqual.as_str(), "==");
+        assert_eq!(TokenKind::BangEqual.as_str(), "!=");
+        assert_eq!(TokenKind::LessLess.as_str(), "<<");
+        assert_eq!(TokenKind::And.as_str(), "and");
+        assert_eq!(TokenKind::Or.as_str(), "or");
+
+        // Test punctuation strings
+        assert_eq!(TokenKind::LeftParen.as_str(), "(");
+        assert_eq!(TokenKind::RightParen.as_str(), ")");
+        assert_eq!(TokenKind::LeftBracket.as_str(), "[");
+        assert_eq!(TokenKind::RightBracket.as_str(), "]");
+        assert_eq!(TokenKind::Comma.as_str(), ",");
+        assert_eq!(TokenKind::Semicolon.as_str(), ";");
+        assert_eq!(TokenKind::Colon.as_str(), ":");
+        assert_eq!(TokenKind::DoubleColon.as_str(), "::");
+        assert_eq!(TokenKind::Arrow.as_str(), "->");
+
+        // Test literal strings
+        assert_eq!(TokenKind::IntLiteral.as_str(), "integer literal");
+        assert_eq!(TokenKind::FloatLiteral.as_str(), "float literal");
+        assert_eq!(TokenKind::StringLiteral.as_str(), "string literal");
+        assert_eq!(TokenKind::RawStringLiteral.as_str(), "raw string literal");
+        assert_eq!(TokenKind::BoolLiteral.as_str(), "boolean literal");
+
+        // Test special strings
+        assert_eq!(TokenKind::Identifier.as_str(), "identifier");
+        assert_eq!(TokenKind::Comment.as_str(), "comment");
+        assert_eq!(TokenKind::Whitespace.as_str(), "whitespace");
+        assert_eq!(TokenKind::Newline.as_str(), "newline");
+        assert_eq!(TokenKind::Eof.as_str(), "end of file");
+        assert_eq!(TokenKind::Error.as_str(), "error");
+    }
+}

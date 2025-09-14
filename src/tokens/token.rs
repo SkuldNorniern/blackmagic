@@ -322,6 +322,240 @@ mod tests {
     }
 
     #[test]
+    fn test_span_empty() {
+        let span = Span::empty(5, 10);
+        assert_eq!(span.start, 0);
+        assert_eq!(span.end, 0);
+        assert_eq!(span.line, 5);
+        assert_eq!(span.column, 10);
+        assert_eq!(span.len(), 0);
+        assert!(span.is_empty());
+    }
+
+    #[test]
+    fn test_span_is_empty() {
+        let empty_span = Span::new(5, 5, 1, 1);
+        let non_empty_span = Span::new(5, 10, 1, 1);
+
+        assert!(empty_span.is_empty());
+        assert!(!non_empty_span.is_empty());
+    }
+
+    #[test]
+    fn test_token_simple() {
+        let token = Token::simple(TokenKind::Let, "let".to_string());
+        assert_eq!(token.kind, TokenKind::Let);
+        assert_eq!(token.text, "let");
+        assert_eq!(token.span, Span::empty(0, 0));
+    }
+
+    #[test]
+    fn test_token_is_empty() {
+        let empty_token = Token::simple(TokenKind::Identifier, String::new());
+        let non_empty_token = Token::simple(TokenKind::Let, "let".to_string());
+
+        assert!(empty_token.is_empty());
+        assert!(!non_empty_token.is_empty());
+    }
+
+    #[test]
+    fn test_token_is_eof() {
+        let eof_token = Token::simple(TokenKind::Eof, String::new());
+        let non_eof_token = Token::simple(TokenKind::Let, "let".to_string());
+
+        assert!(eof_token.is_eof());
+        assert!(!non_eof_token.is_eof());
+    }
+
+    #[test]
+    fn test_token_is_error() {
+        let error_token = Token::simple(TokenKind::Error, "error".to_string());
+        let non_error_token = Token::simple(TokenKind::Let, "let".to_string());
+
+        assert!(error_token.is_error());
+        assert!(!non_error_token.is_error());
+    }
+
+    #[test]
+    fn test_token_result_error() {
+        let span = Span::new(0, 5, 1, 1);
+        let error = TokenResult::error("parse error".to_string(), span);
+
+        assert!(error.is_error());
+        assert!(!error.is_token());
+        assert_eq!(error.as_error(), Some(("parse error", &span)));
+        assert_eq!(error.span(), &span);
+    }
+
+    #[test]
+    fn test_token_result_as_error() {
+        let span = Span::new(0, 5, 1, 1);
+        let error = TokenResult::error("parse error".to_string(), span);
+        let token_result = TokenResult::token(Token::simple(TokenKind::Let, "let".to_string()));
+
+        assert_eq!(error.as_error(), Some(("parse error", &span)));
+        assert_eq!(token_result.as_error(), None);
+    }
+
+    #[test]
+    fn test_token_result_span() {
+        let span1 = Span::new(0, 5, 1, 1);
+        let span2 = Span::new(5, 10, 1, 6);
+        let token_result = TokenResult::token(Token::new(TokenKind::Let, "let".to_string(), span1));
+        let error_result = TokenResult::error("error".to_string(), span2);
+
+        assert_eq!(token_result.span(), &span1);
+        assert_eq!(error_result.span(), &span2);
+    }
+
+    #[test]
+    fn test_token_stream_empty() {
+        let mut stream = TokenStream::empty();
+        assert!(stream.is_at_end());
+        assert_eq!(stream.position(), 0);
+        assert_eq!(stream.peek(), None);
+        assert_eq!(stream.next(), None);
+        assert_eq!(stream.tokens().len(), 0);
+    }
+
+    #[test]
+    fn test_token_stream_peek() {
+        let span1 = Span::new(0, 3, 1, 1);
+        let span2 = Span::new(4, 6, 1, 5);
+        let token1 = TokenResult::token(Token::new(TokenKind::Let, "let".to_string(), span1));
+        let token2 = TokenResult::token(Token::new(TokenKind::Identifier, "x".to_string(), span2));
+
+        let mut stream = TokenStream::new(vec![token1.clone(), token2.clone()]);
+
+        // Peek should not advance position
+        assert_eq!(stream.peek(), Some(&token1));
+        assert_eq!(stream.peek(), Some(&token1));
+        assert_eq!(stream.position(), 0);
+
+        // After next(), peek should return next token
+        assert_eq!(stream.next(), Some(&token1));
+        assert_eq!(stream.peek(), Some(&token2));
+        assert_eq!(stream.position(), 1);
+    }
+
+    #[test]
+    fn test_token_stream_advance() {
+        let span1 = Span::new(0, 3, 1, 1);
+        let span2 = Span::new(4, 6, 1, 5);
+        let token1 = TokenResult::token(Token::new(TokenKind::Let, "let".to_string(), span1));
+        let token2 = TokenResult::token(Token::new(TokenKind::Identifier, "x".to_string(), span2));
+
+        let mut stream = TokenStream::new(vec![token1.clone(), token2.clone()]);
+
+        assert_eq!(stream.position(), 0);
+        stream.advance();
+        assert_eq!(stream.position(), 1);
+        stream.advance();
+        assert_eq!(stream.position(), 2);
+        assert!(stream.is_at_end());
+
+        // Advance beyond end should not panic
+        stream.advance();
+        assert_eq!(stream.position(), 2);
+    }
+
+    #[test]
+    fn test_token_stream_position() {
+        let span = Span::new(0, 3, 1, 1);
+        let token = TokenResult::token(Token::new(TokenKind::Let, "let".to_string(), span));
+
+        let mut stream = TokenStream::new(vec![token.clone(), token.clone(), token.clone()]);
+
+        assert_eq!(stream.position(), 0);
+        stream.advance();
+        assert_eq!(stream.position(), 1);
+        stream.next();
+        assert_eq!(stream.position(), 2);
+    }
+
+    #[test]
+    fn test_token_stream_reset() {
+        let span = Span::new(0, 3, 1, 1);
+        let token = TokenResult::token(Token::new(TokenKind::Let, "let".to_string(), span));
+
+        let mut stream = TokenStream::new(vec![token.clone(), token.clone()]);
+
+        stream.advance();
+        assert_eq!(stream.position(), 1);
+
+        stream.reset();
+        assert_eq!(stream.position(), 0);
+        assert_eq!(stream.peek(), Some(&token));
+    }
+
+    #[test]
+    fn test_token_stream_tokens() {
+        let span = Span::new(0, 3, 1, 1);
+        let token1 = TokenResult::token(Token::new(TokenKind::Let, "let".to_string(), span));
+        let token2 = TokenResult::token(Token::new(TokenKind::Identifier, "x".to_string(), span));
+        let error = TokenResult::error("error".to_string(), span);
+
+        let stream = TokenStream::new(vec![token1.clone(), error.clone(), token2.clone()]);
+
+        let tokens = stream.tokens();
+        assert_eq!(tokens.len(), 3);
+        assert_eq!(tokens[0], token1);
+        assert_eq!(tokens[1], error);
+        assert_eq!(tokens[2], token2);
+    }
+
+    #[test]
+    fn test_token_stream_valid_tokens() {
+        let span = Span::new(0, 3, 1, 1);
+        let token1 = TokenResult::token(Token::new(TokenKind::Let, "let".to_string(), span));
+        let token2 = TokenResult::token(Token::new(TokenKind::Identifier, "x".to_string(), span));
+        let error = TokenResult::error("error".to_string(), span);
+
+        let stream = TokenStream::new(vec![token1.clone(), error, token2.clone()]);
+
+        let valid_tokens = stream.valid_tokens();
+        assert_eq!(valid_tokens.len(), 2);
+        assert_eq!(valid_tokens[0].kind, TokenKind::Let);
+        assert_eq!(valid_tokens[1].kind, TokenKind::Identifier);
+    }
+
+    #[test]
+    fn test_token_stream_errors() {
+        let span1 = Span::new(0, 3, 1, 1);
+        let span2 = Span::new(3, 6, 1, 4);
+        let token = TokenResult::token(Token::new(TokenKind::Let, "let".to_string(), span1));
+        let error1 = TokenResult::error("error1".to_string(), span1);
+        let error2 = TokenResult::error("error2".to_string(), span2);
+
+        let stream = TokenStream::new(vec![token.clone(), error1, error2]);
+
+        let errors = stream.errors();
+        assert_eq!(errors.len(), 2);
+        assert_eq!(errors[0].0, "error1");
+        assert_eq!(errors[1].0, "error2");
+    }
+
+    #[test]
+    fn test_token_stream_has_errors() {
+        let span = Span::new(0, 3, 1, 1);
+        let token = TokenResult::token(Token::new(TokenKind::Let, "let".to_string(), span));
+        let error = TokenResult::error("error".to_string(), span);
+
+        let stream_no_errors = TokenStream::new(vec![token.clone()]);
+        let stream_with_errors = TokenStream::new(vec![token, error]);
+
+        assert!(!stream_no_errors.has_errors());
+        assert!(stream_with_errors.has_errors());
+    }
+
+    #[test]
+    fn test_token_stream_default() {
+        let stream: TokenStream = Default::default();
+        assert!(stream.is_at_end());
+        assert_eq!(stream.tokens().len(), 0);
+    }
+
+    #[test]
     fn test_token_stream() {
         let span1 = Span::new(0, 3, 1, 1);
         let span2 = Span::new(4, 6, 1, 5);

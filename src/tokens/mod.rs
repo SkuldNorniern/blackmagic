@@ -77,6 +77,18 @@ mod tests {
     }
 
     #[test]
+    fn test_create_simple_token() {
+        let token = create_simple_token(TokenKind::Let, "let".to_string());
+        assert_eq!(token.kind, TokenKind::Let);
+        assert_eq!(token.text, "let");
+        assert_eq!(token.span, Span::empty(0, 0));
+        assert_eq!(token.len(), 3);
+        assert!(!token.is_empty());
+        assert!(!token.is_eof());
+        assert!(!token.is_error());
+    }
+
+    #[test]
     fn test_literal_parsing() {
         let result = parse_literal("42");
         assert!(result.is_some());
