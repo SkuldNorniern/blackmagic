@@ -7,6 +7,7 @@ use crate::tokens::{
     create_token_trie, kinds::TokenKind,
     token::{Span, Token, TokenResult, TokenStream}, trie::TokenTrie,
 };
+use std::io::IsTerminal;
 
 // Internal modules
 mod tokenizers;
@@ -15,7 +16,177 @@ mod utils;
 use tokenizers::*;
 use utils::*;
 
-/// Errors that can occur during lexical analysis
+/// Span information for error reporting
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ErrorSpan {
+    pub start: usize,
+    pub end: usize,
+    pub line: usize,
+    pub column: usize,
+}
+
+impl ErrorSpan {
+    pub fn new(start: usize, end: usize, line: usize, column: usize) -> Self {
+        Self { start, end, line, column }
+    }
+
+    pub fn point(pos: usize, line: usize, column: usize) -> Self {
+        Self { start: pos, end: pos, line, column }
+    }
+}
+
+/// Comprehensive error types for the Black Magic language
+#[derive(Debug, Clone, PartialEq)]
+pub enum ErrorKind {
+    /// Unexpected character encountered
+    UnexpectedCharacter(char),
+    /// Unterminated string literal
+    UnterminatedString,
+    /// Invalid escape sequence in string
+    InvalidEscapeSequence(String),
+    /// Unterminated raw string literal
+    UnterminatedRawString,
+    /// Unterminated block comment
+    UnterminatedComment,
+    /// Invalid number literal
+    InvalidNumber(String),
+    /// Invalid operator sequence
+    InvalidOperator(String),
+    /// Replacement operation failed
+    ReplacementError {
+        pattern: String,
+        reason: String,
+    },
+    /// File operation failed
+    FileOperationError {
+        operation: String,
+        path: String,
+        reason: String,
+    },
+    /// Unicode/encoding error
+    EncodingError(String),
+    /// General error with custom message
+    General(String),
+    /// Internal compiler error
+    InternalError(String),
+}
+
+/// Comprehensive error type with context and suggestions
+#[derive(Debug, Clone, PartialEq)]
+pub struct Error {
+    pub kind: ErrorKind,
+    pub span: Option<ErrorSpan>,
+    pub message: String,
+    pub suggestions: Vec<String>,
+    pub help: Option<String>,
+}
+
+impl Error {
+    pub fn new(kind: ErrorKind, span: Option<ErrorSpan>, message: String) -> Self {
+        Self {
+            kind,
+            span,
+            message,
+            suggestions: Vec::new(),
+            help: None,
+        }
+    }
+
+    pub fn with_suggestion(mut self, suggestion: impl Into<String>) -> Self {
+        self.suggestions.push(suggestion.into());
+        self
+    }
+
+    pub fn with_help(mut self, help: impl Into<String>) -> Self {
+        self.help = Some(help.into());
+        self
+    }
+
+    pub fn unexpected_char(ch: char, span: ErrorSpan) -> Self {
+        let message = format!("unexpected character '{}'", ch);
+        Self::new(ErrorKind::UnexpectedCharacter(ch), Some(span), message)
+            .with_suggestion(format!("remove the character '{}'", ch))
+            .with_help("Black Magic only supports ASCII characters for operators and punctuation")
+    }
+
+    pub fn unterminated_string(span: ErrorSpan) -> Self {
+        Self::new(ErrorKind::UnterminatedString, Some(span), "unterminated string literal".to_string())
+            .with_suggestion("add a closing quote (\") to end the string")
+    }
+
+    pub fn invalid_escape(escape: String, span: ErrorSpan) -> Self {
+        let message = format!("invalid escape sequence: \\{}", escape);
+        Self::new(ErrorKind::InvalidEscapeSequence(escape), Some(span), message)
+            .with_suggestion("use valid escape sequences like \\n, \\t, \\\\, or \\\"")
+    }
+
+    pub fn unterminated_comment(span: ErrorSpan) -> Self {
+        Self::new(ErrorKind::UnterminatedComment, Some(span), "unterminated block comment".to_string())
+            .with_suggestion("add */ to close the comment")
+    }
+
+    pub fn invalid_number(num: String, span: ErrorSpan) -> Self {
+        let message = format!("invalid number literal: {}", num);
+        Self::new(ErrorKind::InvalidNumber(num), Some(span), message)
+            .with_suggestion("check for invalid characters or malformed number format")
+    }
+
+    pub fn invalid_operator(op: String, span: ErrorSpan) -> Self {
+        let message = format!("invalid operator sequence: {}", op);
+        Self::new(ErrorKind::InvalidOperator(op), Some(span), message)
+            .with_help("Black Magic supports operators like +, -, *, /, ==, !=, etc.")
+    }
+
+    pub fn replacement_error(pattern: String, reason: String, span: Option<ErrorSpan>) -> Self {
+        let message = format!("replacement operation failed: {}", reason);
+        Self::new(ErrorKind::ReplacementError { pattern, reason }, span, message)
+            .with_help("check the search pattern and replacement string")
+    }
+
+    pub fn file_error(operation: String, path: String, reason: String) -> Self {
+        let message = format!("{} failed for '{}': {}", operation, path, reason);
+        Self::new(ErrorKind::FileOperationError { operation, path, reason }, None, message)
+    }
+
+    pub fn encoding_error(reason: String, span: Option<ErrorSpan>) -> Self {
+        Self::new(ErrorKind::EncodingError(reason.clone()), span, format!("encoding error: {}", reason))
+            .with_help("Black Magic currently only supports ASCII characters")
+    }
+
+    pub fn internal_error(message: String) -> Self {
+        Self::new(ErrorKind::InternalError(message.clone()), None, format!("internal error: {}", message))
+            .with_help("this is a bug in the compiler, please report it")
+    }
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Error header
+        write!(f, "error")?;
+
+        if let Some(span) = &self.span {
+            write!(f, "[{}:{}]", span.line, span.column)?;
+        }
+
+        writeln!(f, ": {}", self.message)?;
+
+        // Suggestions
+        if !self.suggestions.is_empty() {
+            for suggestion in &self.suggestions {
+                writeln!(f, "  --> suggestion: {}", suggestion)?;
+            }
+        }
+
+        // Help
+        if let Some(help) = &self.help {
+            writeln!(f, "  --> help: {}", help)?;
+        }
+
+        Ok(())
+    }
+}
+
+/// Legacy LexerError for backward compatibility
 #[derive(Debug, Clone, PartialEq)]
 pub enum LexerError {
     /// Unexpected character encountered
@@ -26,6 +197,8 @@ pub enum LexerError {
     InvalidNumber(String),
     /// General error with message
     General(String),
+    /// New comprehensive error
+    Comprehensive(Error),
 }
 
 impl std::fmt::Display for LexerError {
@@ -37,7 +210,148 @@ impl std::fmt::Display for LexerError {
             LexerError::UnterminatedComment => write!(f, "unterminated comment"),
             LexerError::InvalidNumber(s) => write!(f, "invalid number: {}", s),
             LexerError::General(msg) => write!(f, "{}", msg),
+            LexerError::Comprehensive(error) => write!(f, "{}", error),
         }
+    }
+}
+
+/// Colored error formatting (similar to Rust's cargo output)
+pub struct ColoredError<'a>(pub &'a Error);
+
+impl<'a> std::fmt::Display for ColoredError<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use std::io::IsTerminal;
+        use std::io::Write;
+
+        let is_terminal = std::io::stderr().is_terminal();
+
+        // Color codes
+        let red = if is_terminal { "\x1b[31m" } else { "" };
+        let bold_red = if is_terminal { "\x1b[1;31m" } else { "" };
+        let cyan = if is_terminal { "\x1b[36m" } else { "" };
+        let yellow = if is_terminal { "\x1b[33m" } else { "" };
+        let reset = if is_terminal { "\x1b[0m" } else { "" };
+
+        // Error header
+        write!(f, "{}{}error{}{}", bold_red, red, reset, red)?;
+
+        if let Some(span) = &self.0.span {
+            write!(f, "[{}:{}]", span.line, span.column)?;
+        }
+
+        write!(f, ": {}{}", reset, self.0.message)?;
+
+        if !self.0.suggestions.is_empty() || self.0.help.is_some() {
+            writeln!(f)?;
+        }
+
+        // Suggestions
+        if !self.0.suggestions.is_empty() {
+            for suggestion in &self.0.suggestions {
+                writeln!(f, "  {}--> {}{}suggestion{}: {}", cyan, reset, yellow, reset, suggestion)?;
+            }
+        }
+
+        // Help
+        if let Some(help) = &self.0.help {
+            writeln!(f, "  {}--> {}{}help{}: {}", cyan, reset, yellow, reset, help)?;
+        }
+
+        write!(f, "{}", reset)?;
+        Ok(())
+    }
+}
+
+/// Error reporting utilities
+pub struct ErrorReporter {
+    errors: Vec<Error>,
+    warnings: Vec<Error>,
+}
+
+impl ErrorReporter {
+    pub fn new() -> Self {
+        Self {
+            errors: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+
+    pub fn error(&mut self, error: Error) {
+        self.errors.push(error);
+    }
+
+    pub fn warning(&mut self, warning: Error) {
+        self.warnings.push(warning);
+    }
+
+    pub fn has_errors(&self) -> bool {
+        !self.errors.is_empty()
+    }
+
+    pub fn has_warnings(&self) -> bool {
+        !self.warnings.is_empty()
+    }
+
+    pub fn print_report(&self) -> std::io::Result<()> {
+        use std::io::{self, Write};
+
+        let mut stderr = io::stderr();
+
+        // Print warnings first
+        for warning in &self.warnings {
+            // For warnings, we could use a different color (yellow)
+            let yellow = if stderr.is_terminal() { "\x1b[33m" } else { "" };
+            let reset = if stderr.is_terminal() { "\x1b[0m" } else { "" };
+
+            write!(stderr, "{}{}warning{}{}: ", yellow, yellow, reset, yellow)?;
+
+            if let Some(span) = &warning.span {
+                write!(stderr, "[{}:{}] ", span.line, span.column)?;
+            }
+
+            writeln!(stderr, "{}{}", warning.message, reset)?;
+
+            // Print suggestions and help for warnings too
+            for suggestion in &warning.suggestions {
+                writeln!(stderr, "  --> suggestion: {}", suggestion)?;
+            }
+
+            if let Some(help) = &warning.help {
+                writeln!(stderr, "  --> help: {}", help)?;
+            }
+        }
+
+        // Print errors
+        for error in &self.errors {
+            writeln!(stderr, "{}", ColoredError(error))?;
+        }
+
+        // Summary
+        if !self.warnings.is_empty() || !self.errors.is_empty() {
+            let total_issues = self.warnings.len() + self.errors.len();
+            let error_count = self.errors.len();
+            let warning_count = self.warnings.len();
+
+            if error_count > 0 {
+                let red = if stderr.is_terminal() { "\x1b[31m" } else { "" };
+                let reset = if stderr.is_terminal() { "\x1b[0m" } else { "" };
+                writeln!(stderr, "{}error{}: aborting due to {} previous error{}",
+                        red, reset, error_count, if error_count == 1 { "" } else { "s" })?;
+            } else if warning_count > 0 {
+                let yellow = if stderr.is_terminal() { "\x1b[33m" } else { "" };
+                let reset = if stderr.is_terminal() { "\x1b[0m" } else { "" };
+                writeln!(stderr, "{}warning{}: {} warning{} emitted",
+                        yellow, reset, warning_count, if warning_count == 1 { "" } else { "s" })?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl Default for ErrorReporter {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -525,7 +839,7 @@ impl<'a> Lexer<'a> {
 }
 
 /// Convenience function to tokenize a string
-pub fn tokenize(source: &str) -> LexerResult<TokenStream> {
+    pub fn tokenize(source: &str) -> LexerResult<TokenStream> {
     let mut lexer = Lexer::new(source);
     lexer.tokenize()
 }
@@ -938,6 +1252,122 @@ mod tests {
                     assert!(error_msg.len() < 200, "Error message should be concise: {}", error_msg);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn test_comprehensive_error_system() {
+        use crate::lexer::{Error, ErrorSpan, ErrorKind};
+
+        // Test Error creation and formatting
+        let span = ErrorSpan::point(10, 2, 5);
+        let error = Error::unexpected_char('@', span)
+            .with_suggestion("use a valid identifier character")
+            .with_help("Black Magic supports standard ASCII operators");
+
+        let error_str = error.to_string();
+
+        // Check that the error contains expected components
+        assert!(error_str.contains("error[2:5]"));
+        assert!(error_str.contains("unexpected character '@'"));
+        assert!(error_str.contains("suggestion: use a valid identifier character"));
+        assert!(error_str.contains("help: Black Magic supports standard ASCII operators"));
+
+        // Test replacement error
+        let replacement_error = Error::replacement_error(
+            "old_pattern".to_string(),
+            "pattern not found".to_string(),
+            Some(span)
+        );
+
+        assert!(replacement_error.to_string().contains("replacement operation failed"));
+        assert!(replacement_error.to_string().contains("pattern not found"));
+
+        // Test file error
+        let file_error = Error::file_error(
+            "read".to_string(),
+            "/path/to/file.txt".to_string(),
+            "permission denied".to_string()
+        );
+
+        assert!(file_error.to_string().contains("read failed"));
+        assert!(file_error.to_string().contains("permission denied"));
+    }
+
+    #[test]
+    fn test_error_reporter() {
+        use crate::lexer::ErrorReporter;
+
+        let mut reporter = ErrorReporter::new();
+
+        // Add some errors
+        let span = ErrorSpan::point(10, 2, 5);
+        let error = Error::unexpected_char('@', span);
+        let warning = Error::encoding_error("non-ASCII character detected".to_string(), Some(span));
+
+        reporter.error(error);
+        reporter.warning(warning);
+
+        assert!(reporter.has_errors());
+        assert!(reporter.has_warnings());
+        assert_eq!(reporter.errors.len(), 1);
+        assert_eq!(reporter.warnings.len(), 1);
+
+        // Test printing (this would normally go to stderr)
+        // We can't easily test the colored output in unit tests,
+        // but we can verify the method exists and doesn't panic
+        let result = reporter.print_report();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_colored_error_formatting() {
+        use crate::lexer::ColoredError;
+
+        let span = ErrorSpan::point(10, 2, 5);
+        let error = Error::unexpected_char('@', span)
+            .with_suggestion("remove the '@' character");
+
+        let colored_error = ColoredError(&error);
+        let formatted = colored_error.to_string();
+
+        // The formatted error should contain the basic error information
+        // (exact color codes depend on terminal detection)
+        assert!(formatted.contains("error"));
+        assert!(formatted.contains("unexpected character '@'"));
+        assert!(formatted.contains("suggestion"));
+    }
+
+    #[test]
+    fn test_error_kind_variants() {
+        // Test that all ErrorKind variants work correctly
+        let span = ErrorSpan::point(10, 2, 5);
+
+        let test_cases = vec![
+            ErrorKind::UnexpectedCharacter('@'),
+            ErrorKind::UnterminatedString,
+            ErrorKind::InvalidEscapeSequence("x".to_string()),
+            ErrorKind::UnterminatedRawString,
+            ErrorKind::UnterminatedComment,
+            ErrorKind::InvalidNumber("123abc".to_string()),
+            ErrorKind::InvalidOperator("===".to_string()),
+            ErrorKind::ReplacementError {
+                pattern: "old".to_string(),
+                reason: "not found".to_string(),
+            },
+            ErrorKind::FileOperationError {
+                operation: "read".to_string(),
+                path: "/test".to_string(),
+                reason: "not found".to_string(),
+            },
+            ErrorKind::EncodingError("invalid UTF-8".to_string()),
+            ErrorKind::General("test error".to_string()),
+            ErrorKind::InternalError("bug in compiler".to_string()),
+        ];
+
+        for kind in test_cases {
+            let error = Error::new(kind, Some(span), "test message".to_string());
+            assert!(!error.to_string().is_empty());
         }
     }
 }
