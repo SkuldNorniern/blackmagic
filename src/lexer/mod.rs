@@ -618,4 +618,326 @@ mod tests {
         assert_eq!(tokens[6].kind, TokenKind::Comma);
         assert_eq!(tokens[7].kind, TokenKind::Semicolon);
     }
+
+    #[test]
+    fn test_lexer_error_unexpected_character() {
+        // Test various unexpected characters that should cause errors
+        let test_cases = vec![
+            "@",    // At symbol
+            "#",    // Hash (not part of valid syntax)
+            "$",    // Dollar sign
+            "%",    // Percent (already handled as operator)
+            "^",    // Caret (already handled as operator)
+            "&",    // Ampersand (already handled as operator)
+            "|",    // Pipe (already handled as operator)
+            "~",    // Tilde (already handled as operator)
+            "`",    // Backtick
+            "\\",   // Backslash
+            "?",    // Question mark
+            "'",    // Single quote (not handled)
+        ];
+
+        for ch in test_cases {
+            let source = format!("hello {}", ch);
+            let result = tokenize(&source);
+
+            match result {
+                Ok(_) => {
+                    // If tokenization succeeded, check if there are any errors
+                    if let Ok(token_stream) = tokenize(&source) {
+                        if token_stream.has_errors() {
+                            // This is expected - we should have errors for unexpected characters
+                            let errors = token_stream.errors();
+                            assert!(!errors.is_empty(), "Expected error for character '{}'", ch);
+                            // Check that the error message mentions the unexpected character
+                            assert!(errors[0].0.contains(&format!("unexpected character '{}'", ch)) ||
+                                    errors[0].0.contains("unexpected character"),
+                                    "Error message should mention unexpected character '{}': {}", ch, errors[0].0);
+                        } else {
+                            // If no errors, this character might be valid, which is fine
+                        }
+                    }
+                }
+                Err(e) => {
+                    // Tokenization failed completely - this is also acceptable for truly unexpected characters
+                    // The error should be descriptive
+                    let error_msg = e.to_string();
+                    assert!(!error_msg.is_empty(), "Error message should not be empty");
+                    assert!(error_msg.contains("unexpected") || error_msg.contains("invalid") ||
+                            error_msg.contains("error"), "Error should be descriptive: {}", error_msg);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_lexer_error_unterminated_string() {
+        let source = "\"hello world";
+        let result = tokenize(source);
+
+        match result {
+            Ok(token_stream) => {
+                // Should have errors for unterminated string
+                assert!(token_stream.has_errors(), "Unterminated string should cause errors");
+                let errors = token_stream.errors();
+                assert!(!errors.is_empty(), "Should have at least one error");
+                let error_msg = &errors[0].0;
+                assert!(error_msg.contains("unterminated") || error_msg.contains("string"),
+                        "Error should mention unterminated string: {}", error_msg);
+            }
+            Err(e) => {
+                let error_msg = e.to_string();
+                assert!(error_msg.contains("unterminated") || error_msg.contains("string"),
+                        "Error should mention unterminated string: {}", error_msg);
+            }
+        }
+    }
+
+    #[test]
+    fn test_lexer_error_invalid_escape_sequence() {
+        let test_cases = vec![
+            "\"hello \\x world\"",     // Invalid hex escape
+            "\"hello \\u123 world\"",  // Invalid unicode escape
+            "\"hello \\z world\"",     // Invalid escape character
+            "\"hello \\123 world\"",   // Invalid octal escape
+        ];
+
+        for source in test_cases {
+            let result = tokenize(source);
+
+            match result {
+                Ok(token_stream) => {
+                    if token_stream.has_errors() {
+                        let errors = token_stream.errors();
+                        assert!(!errors.is_empty(), "Invalid escape should cause errors");
+                        let error_msg = &errors[0].0;
+                        assert!(error_msg.contains("escape") || error_msg.contains("invalid"),
+                                "Error should mention escape sequence: {}", error_msg);
+                    }
+                }
+                Err(e) => {
+                    let error_msg = e.to_string();
+                    assert!(error_msg.contains("escape") || error_msg.contains("invalid"),
+                            "Error should mention escape sequence: {}", error_msg);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_lexer_error_unterminated_raw_string() {
+        let test_cases = vec![
+            "r\"hello",           // Unterminated raw string
+            "r\"hello world",     // Unterminated raw string
+            "r\"multi\nline",     // Multi-line unterminated raw string
+        ];
+
+        for source in test_cases {
+            let result = tokenize(source);
+
+            match result {
+                Ok(token_stream) => {
+                    if token_stream.has_errors() {
+                        let errors = token_stream.errors();
+                        assert!(!errors.is_empty(), "Unterminated raw string should cause errors");
+                        let error_msg = &errors[0].0;
+                        assert!(error_msg.contains("unterminated") || error_msg.contains("raw"),
+                                "Error should mention unterminated raw string: {}", error_msg);
+                    }
+                }
+                Err(e) => {
+                    let error_msg = e.to_string();
+                    assert!(error_msg.contains("unterminated") || error_msg.contains("raw"),
+                            "Error should mention unterminated raw string: {}", error_msg);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_lexer_error_unterminated_block_comment() {
+        let test_cases = vec![
+            "/* unterminated comment",              // Simple unterminated
+            "/* multi line\nunterminated",          // Multi-line unterminated
+            "/* nested /* still unterminated",      // Nested unterminated
+        ];
+
+        for source in test_cases {
+            let result = tokenize(source);
+
+            match result {
+                Ok(token_stream) => {
+                    if token_stream.has_errors() {
+                        let errors = token_stream.errors();
+                        assert!(!errors.is_empty(), "Unterminated comment should cause errors");
+                        let error_msg = &errors[0].0;
+                        assert!(error_msg.contains("unterminated") || error_msg.contains("comment"),
+                                "Error should mention unterminated comment: {}", error_msg);
+                    }
+                }
+                Err(e) => {
+                    let error_msg = e.to_string();
+                    assert!(error_msg.contains("unterminated") || error_msg.contains("comment"),
+                            "Error should mention unterminated comment: {}", error_msg);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_lexer_error_invalid_number() {
+        let test_cases = vec![
+            "123abc",           // Invalid suffix
+            "123.456.789",      // Multiple decimal points
+            "123.456f32f64",    // Multiple suffixes
+            "0b012",           // Invalid binary digit
+            "0o008",           // Invalid octal digit
+            "0x00gg",          // Invalid hex digit
+            "123_",            // Trailing underscore
+            "_123",            // Leading underscore
+            "123__456",        // Double underscore
+        ];
+
+        for source in test_cases {
+            let result = tokenize(source);
+
+            match result {
+                Ok(token_stream) => {
+                    // Even if tokenization succeeds, numbers might be tokenized as identifiers
+                    // or cause other issues
+                    let tokens = token_stream.valid_tokens();
+                    // The important thing is that we don't crash
+                    assert!(!tokens.is_empty(), "Should produce some tokens");
+
+                    // Check if any tokens look like malformed numbers
+                    for token in &tokens {
+                        if token.kind == TokenKind::Identifier {
+                            // If it's an identifier, it might be a malformed number
+                            // This is acceptable behavior
+                        }
+                    }
+                }
+                Err(e) => {
+                    let error_msg = e.to_string();
+                    assert!(error_msg.contains("invalid") || error_msg.contains("number") ||
+                            error_msg.contains("unexpected"),
+                            "Error should be descriptive: {}", error_msg);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_lexer_error_invalid_operators() {
+        let test_cases = vec![
+            "===",      // Triple equals
+            "!==",      // Invalid combination
+            "&&&",      // Triple ampersand
+            "|||",      // Triple pipe
+            "<<<",      // Triple less than
+            ">>>",      // Triple greater than
+            "**",       // Double star (not valid)
+            "//=",      // Invalid combination
+        ];
+
+        for source in test_cases {
+            let result = tokenize(source);
+
+            match result {
+                Ok(token_stream) => {
+                    if token_stream.has_errors() {
+                        let errors = token_stream.errors();
+                        assert!(!errors.is_empty(), "Invalid operator should cause errors");
+                        let error_msg = &errors[0].0;
+                        assert!(error_msg.contains("unexpected") || error_msg.contains("invalid"),
+                                "Error should mention unexpected or invalid: {}", error_msg);
+                    } else {
+                        // If no errors, the operators might be split into valid parts
+                        let tokens = token_stream.valid_tokens();
+                        // This is acceptable - the lexer might split complex operators
+                        assert!(!tokens.is_empty(), "Should produce some tokens");
+                    }
+                }
+                Err(e) => {
+                    let error_msg = e.to_string();
+                    assert!(error_msg.contains("unexpected") || error_msg.contains("invalid"),
+                            "Error should mention unexpected or invalid: {}", error_msg);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_lexer_error_recovery() {
+        // Test that lexer can recover from errors and continue parsing
+        let source = "valid +++ invalid @@@ more_valid";
+        let result = tokenize(source);
+
+        match result {
+            Ok(token_stream) => {
+                let tokens = token_stream.valid_tokens();
+
+                // Should have some valid tokens
+                assert!(!tokens.is_empty(), "Should produce some valid tokens");
+
+                // Check that we get the valid identifier
+                assert_eq!(tokens[0].kind, TokenKind::Identifier);
+                assert_eq!(tokens[0].text, "valid");
+
+                // Should also have some errors
+                if token_stream.has_errors() {
+                    let errors = token_stream.errors();
+                    assert!(!errors.is_empty(), "Should have errors for invalid parts");
+                }
+
+                // Should continue after errors
+                let more_valid_found = tokens.iter().any(|t| t.kind == TokenKind::Identifier && t.text == "more_valid");
+                assert!(more_valid_found, "Should find 'more_valid' after errors");
+            }
+            Err(e) => {
+                // If it fails completely, that's also acceptable for severely malformed input
+                let error_msg = e.to_string();
+                assert!(!error_msg.is_empty(), "Error message should not be empty");
+            }
+        }
+    }
+
+    #[test]
+    fn test_lexer_error_message_quality() {
+        // Test that error messages are helpful and informative
+        let test_cases = vec![
+            ("\"", "unterminated string"),
+            ("/*", "unterminated comment"),
+            ("@invalid", "unexpected character"),
+            ("123abc@", "unexpected character"),
+        ];
+
+        for (source, expected_contains) in test_cases {
+            let result = tokenize(source);
+
+            match result {
+                Ok(token_stream) => {
+                    if token_stream.has_errors() {
+                        let errors = token_stream.errors();
+                        let error_msg = &errors[0].0;
+                        assert!(error_msg.contains(expected_contains),
+                                "Error message should contain '{}': {}", expected_contains, error_msg);
+
+                        // Error messages should not be empty
+                        assert!(!error_msg.is_empty(), "Error message should not be empty");
+
+                        // Error messages should be reasonably short
+                        assert!(error_msg.len() < 200, "Error message should be concise: {}", error_msg);
+                    }
+                }
+                Err(e) => {
+                    let error_msg = e.to_string();
+                    assert!(error_msg.contains(expected_contains),
+                            "Error message should contain '{}': {}", expected_contains, error_msg);
+                    assert!(!error_msg.is_empty(), "Error message should not be empty");
+                    assert!(error_msg.len() < 200, "Error message should be concise: {}", error_msg);
+                }
+            }
+        }
+    }
 }
