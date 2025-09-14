@@ -71,6 +71,61 @@ pub enum ErrorKind {
     InternalError(String),
 }
 
+/// Code window showing source context around an error
+#[derive(Debug, Clone, PartialEq)]
+pub struct CodeWindow {
+    pub lines: Vec<String>,
+    pub error_line: usize,
+    pub error_column: usize,
+    pub context_lines: usize,
+}
+
+impl CodeWindow {
+    pub fn new(source: &str, span: &ErrorSpan, context_lines: usize) -> Self {
+        let lines: Vec<&str> = source.lines().collect();
+        let error_line_idx = span.line - 1; // Convert to 0-based indexing
+        let start_line = error_line_idx.saturating_sub(context_lines);
+        let end_line = (error_line_idx + context_lines + 1).min(lines.len());
+
+        let window_lines = lines[start_line..end_line]
+            .iter()
+            .enumerate()
+            .map(|(i, line)| {
+                let line_number = start_line + i + 1;
+                format!("{:4} | {}", line_number, line)
+            })
+            .collect();
+
+        Self {
+            lines: window_lines,
+            error_line: span.line,
+            error_column: span.column,
+            context_lines,
+        }
+    }
+}
+
+impl std::fmt::Display for CodeWindow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for line in &self.lines {
+            writeln!(f, "{}", line)?;
+        }
+
+        // Add error pointer line - the error line should be at index `context_lines` in our lines vector
+        if self.lines.len() > self.context_lines {
+            let prefix_len = format!("{:4} | ", self.error_line).len();
+            let pointer_offset = prefix_len + self.error_column - 1;
+
+            // Create pointer line with spaces and caret
+            let mut pointer_line = " ".repeat(pointer_offset);
+            pointer_line.push('^');
+            writeln!(f, "{}", pointer_line)?;
+        }
+
+        Ok(())
+    }
+}
+
 /// Comprehensive error type with context and suggestions
 #[derive(Debug, Clone, PartialEq)]
 pub struct Error {
@@ -79,6 +134,7 @@ pub struct Error {
     pub message: String,
     pub suggestions: Vec<String>,
     pub help: Option<String>,
+    pub source_window: Option<CodeWindow>,
 }
 
 impl Error {
@@ -89,7 +145,15 @@ impl Error {
             message,
             suggestions: Vec::new(),
             help: None,
+            source_window: None,
         }
+    }
+
+    pub fn with_source_window(mut self, source: &str) -> Self {
+        if let Some(span) = &self.span {
+            self.source_window = Some(CodeWindow::new(source, span, 2));
+        }
+        self
     }
 
     pub fn with_suggestion(mut self, suggestion: impl Into<String>) -> Self {
@@ -170,8 +234,17 @@ impl std::fmt::Display for Error {
 
         writeln!(f, ": {}", self.message)?;
 
+        // Source code window
+        if let Some(window) = &self.source_window {
+            writeln!(f)?;
+            write!(f, "{}", window)?;
+        }
+
         // Suggestions
         if !self.suggestions.is_empty() {
+            if self.source_window.is_none() {
+                writeln!(f)?;
+            }
             for suggestion in &self.suggestions {
                 writeln!(f, "  --> suggestion: {}", suggestion)?;
             }
@@ -179,6 +252,9 @@ impl std::fmt::Display for Error {
 
         // Help
         if let Some(help) = &self.help {
+            if self.source_window.is_none() && self.suggestions.is_empty() {
+                writeln!(f)?;
+            }
             writeln!(f, "  --> help: {}", help)?;
         }
 
@@ -221,7 +297,6 @@ pub struct ColoredError<'a>(pub &'a Error);
 impl<'a> std::fmt::Display for ColoredError<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use std::io::IsTerminal;
-        use std::io::Write;
 
         let is_terminal = std::io::stderr().is_terminal();
 
@@ -241,8 +316,16 @@ impl<'a> std::fmt::Display for ColoredError<'a> {
 
         write!(f, ": {}{}", reset, self.0.message)?;
 
-        if !self.0.suggestions.is_empty() || self.0.help.is_some() {
+        // Source code window (no color for readability)
+        if let Some(window) = &self.0.source_window {
             writeln!(f)?;
+            write!(f, "{}", window)?;
+        }
+
+        if !self.0.suggestions.is_empty() || self.0.help.is_some() {
+            if self.0.source_window.is_none() {
+                writeln!(f)?;
+            }
         }
 
         // Suggestions
@@ -1369,5 +1452,72 @@ mod tests {
             let error = Error::new(kind, Some(span), "test message".to_string());
             assert!(!error.to_string().is_empty());
         }
+    }
+
+    #[test]
+    fn test_code_window_functionality() {
+        // Test code window creation and display
+        let source = "line 1\nline 2\nline 3\nline 4\nline 5";
+        let span = ErrorSpan::new(8, 12, 3, 5); // Points to "line" in "line 3"
+
+        let window = CodeWindow::new(source, &span, 2);
+
+        // Should have 5 lines (error_line ± context_lines, all within source bounds)
+        assert_eq!(window.lines.len(), 5);
+
+        // Error line should be line 3
+        assert_eq!(window.error_line, 3);
+        assert_eq!(window.error_column, 5);
+
+        // Test display
+        let display = window.to_string();
+        assert!(display.contains("   2 | line 2"));
+        assert!(display.contains("   3 | line 3"));
+        assert!(display.contains("   4 | line 4"));
+
+        // Should have error pointer pointing to column 5
+        assert!(display.contains("     ^")); // 4 spaces + ^ (column 5 is 1-based, so 4 spaces before ^)
+    }
+
+    #[test]
+    fn test_error_with_code_window() {
+        // Test error with code window integration
+        let source = "fn main() {\n    let x = @invalid;\n    println(x);\n}";
+        let span = ErrorSpan::point(16, 2, 13); // Points to '@' in line 2
+
+        let error = Error::unexpected_char('@', span)
+            .with_source_window(source)
+            .with_suggestion("use a valid identifier");
+
+        let error_display = error.to_string();
+
+        // Should contain code window
+        assert!(error_display.contains("   1 | fn main() {"));
+        assert!(error_display.contains("   2 |     let x = @invalid;"));
+        assert!(error_display.contains("   3 |     println(x);"));
+
+        // Should contain error pointer (exact spacing may vary based on line number formatting)
+        assert!(error_display.contains("^")); // Should have an error pointer somewhere
+
+        // Should contain suggestions
+        assert!(error_display.contains("suggestion: use a valid identifier"));
+    }
+
+    #[test]
+    fn test_code_window_edge_cases() {
+        // Test edge cases for code windows
+        let source = "single line";
+        let span = ErrorSpan::point(5, 1, 6); // Points to 'l' in "single"
+
+        let window = CodeWindow::new(source, &span, 3);
+
+        // Should only have one line
+        assert_eq!(window.lines.len(), 1);
+        assert!(window.lines[0].contains("single line"));
+
+        // Test with empty source
+        let empty_source = "";
+        let empty_window = CodeWindow::new(empty_source, &span, 1);
+        assert_eq!(empty_window.lines.len(), 0);
     }
 }
