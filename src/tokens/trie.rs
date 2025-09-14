@@ -150,6 +150,7 @@ impl TokenTrie {
             (">>", TokenKind::GreaterGreater),
             ("==", TokenKind::EqualEqual),
             ("!=", TokenKind::BangEqual),
+            ("!", TokenKind::Exclamation),
             ("<", TokenKind::Less),
             ("<=", TokenKind::LessEqual),
             (">", TokenKind::Greater),
